@@ -144,8 +144,6 @@ const calculateRecurring = (node, scale) => {
 export default function ApolloSsrPage({ account = null, scale }) {
   return (
     <Layout>
-      <h1>Funders Dashboard</h1>
-
       <p>
         Funder: <a href={`https://opencollective.com/${account.slug}`}>{account.name}</a>
       </p>

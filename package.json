@@ -1,8 +1,8 @@
 {
-  "name": "opencollective-frontend-template",
+  "name": "funders-dashboard",
   "version": "1.0.0",
   "description": "Kickstart a new frontend project at Open Collective",
-  "repository": "https://github.com/opencollective/opencollective-frontend-template",
+  "repository": "https://github.com/opencollective/funders-dashboard",
   "private": true,
   "bugs": {
     "url": "https://github.com/opencollective/opencollective/issues"
