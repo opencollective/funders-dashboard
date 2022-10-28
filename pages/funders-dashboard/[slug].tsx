@@ -1,29 +1,64 @@
 import React from 'react';
 import { gql } from '@apollo/client';
-import dayjs from 'dayjs';
 import { uniqBy } from 'lodash';
 import type { NextPageContext } from 'next';
+import { useRouter } from 'next/router';
+import { FormattedMessage } from 'react-intl';
+import styled from 'styled-components';
 
 import { initializeApollo } from '../../lib/apollo-client';
+import { Amount } from '../../lib/graphql/types/v2/graphql';
+import { useLoggedInUser } from '../../lib/hooks/useLoggedInUser';
+import { parseDateInterval } from '@opencollective/frontend-components/lib/date-utils';
 
+import { DashboardFilters } from '../../components/contributors-dashboard/DashboardFilters';
 import Layout from '../../components/Layout';
+import { PercentageDiff } from '../../components/PercentageDiff';
+import Avatar from '@opencollective/frontend-components/components/Avatar';
+import Container from '@opencollective/frontend-components/components/Container';
+import { Box } from '@opencollective/frontend-components/components/Grid';
+import LoadingPlaceholder from '@opencollective/frontend-components/components/LoadingPlaceholder';
+import StyledLink from '@opencollective/frontend-components/components/StyledLink';
+import { P, Span } from '@opencollective/frontend-components/components/Text';
 
-enum TimeScale {
-  month = 'month',
-  year = 'year',
-}
-
-const formatAmount = ({ value, currency }) => {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
+const formatAmount = ({ value, currency }: Amount) => {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value);
 };
 
+const Table = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+  thead {
+    tr {
+      th {
+        padding-bottom: 32px;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 16px;
+        color: #4d4f51;
+      }
+    }
+  }
+  tbody {
+    td {
+      text-align: center;
+      font-size: 16px;
+      line-height: 18px;
+      color: #323334;
+      padding: 16px 0;
+      border-top: 1px solid #eaeaec;
+      &:first-child {
+        padding-left: 16px;
+      }
+      &:last-child {
+        padding-right: 16px;
+      }
+    }
+  }
+`;
+
 const funderQuery = gql`
-  query account(
-    $slug: String
-    $firstDayOfMonth: DateTime
-    $firstDayOfPastMonth: DateTime
-    $firstDayOfPreviousMonth: DateTime
-  ) {
+  query ContributorsDashboard($slug: String, $dateFrom: DateTime, $dateTo: DateTime) {
     account(slug: $slug) {
       slug
       name
@@ -33,34 +68,31 @@ const funderQuery = gql`
           account {
             slug
             name
+            imageUrl(height: 80)
             stats {
               totalAmountReceivedPastMonth: totalAmountReceived(
-                dateFrom: $firstDayOfPastMonth
-                dateTo: $firstDayOfMonth
+                dateFrom: $dateFrom
+                dateTo: $dateTo
                 includeChildren: true
               ) {
                 value
                 currency
               }
-              totalAmountSpentPastMonth: totalAmountSpent(
-                dateFrom: $firstDayOfPastMonth
-                dateTo: $firstDayOfMonth
-                includeChildren: true
-              ) {
+              totalAmountSpentPastMonth: totalAmountSpent(dateFrom: $dateFrom, dateTo: $dateTo, includeChildren: true) {
                 value
                 currency
               }
               totalAmountReceivedPreviousMonth: totalAmountReceived(
-                dateFrom: $firstDayOfPreviousMonth
-                dateTo: $firstDayOfPastMonth
+                dateFrom: $dateFrom
+                dateTo: $dateTo
                 includeChildren: true
               ) {
                 value
                 currency
               }
               totalAmountSpentPreviousMonth: totalAmountSpent(
-                dateFrom: $firstDayOfPreviousMonth
-                dateTo: $firstDayOfPastMonth
+                dateFrom: $dateFrom
+                dateTo: $dateTo
                 includeChildren: true
               ) {
                 value
@@ -90,114 +122,148 @@ const funderQuery = gql`
   }
 `;
 
-export async function getServerSideProps(context: NextPageContext) {
-  const client = initializeApollo({ context });
-
-  let scale: TimeScale = TimeScale.year;
-  if (context.query.scale === 'month') {
-    scale = TimeScale.month;
-  }
-
-  const { data } = await client.query({
-    query: funderQuery,
-    variables: {
-      slug: context.query.slug,
-      firstDayOfMonth: dayjs().startOf(scale),
-      firstDayOfPastMonth: dayjs().subtract(1, scale).startOf(scale),
-      firstDayOfPreviousMonth: dayjs().subtract(2, scale).startOf(scale),
-    },
-  });
-
+const getVariablesFromQuery = query => {
+  const { from: dateFrom, to: dateTo } = parseDateInterval(query.period);
   return {
-    props: {
-      account: data.account,
-      scale,
-    },
+    slug: query.slug,
+    offset: parseInt(query.offset) || 0,
+    limit: parseInt(query.limit) || 100,
+    dateFrom,
+    dateTo,
   };
-}
-
-const makeDiff = (afterValue, beforeValue) => {
-  if (afterValue === 0 || beforeValue === 0 || afterValue === beforeValue) {
-    return '';
-  }
-  const sign = Math.abs(afterValue) > Math.abs(beforeValue) ? '+' : '';
-  return `${sign + Math.round(((afterValue - beforeValue) / beforeValue) * 100)}%`;
 };
 
-const calculateRecurring = (node, scale) => {
-  let recurring;
-  if (scale === 'year') {
-    recurring = { ...node.account.stats.activeYearlyRecurringContributions };
-    if (node.account.stats.activeYearlyRecurringContributions) {
-      recurring.value += Math.round(node.account.stats.activeMonthlyRecurringContributions.value * 12);
-    }
-  } else {
-    recurring = { ...node.account.stats.activeMonthlyRecurringContributions };
-    if (node.account.stats.activeYearlyRecurringContributions) {
-      recurring.value += Math.round(node.account.stats.activeYearlyRecurringContributions.value / 12);
-    }
+export async function getServerSideProps(context: NextPageContext) {
+  const client = initializeApollo({ context });
+  const variables = getVariablesFromQuery(context.query);
+  const { data } = await client.query({ query: funderQuery, variables });
+  return { props: { account: data.account } };
+}
+
+const calculateRecurring = node => {
+  // TODO This doesn't really make sense with the period filter. Commenting rather than fixing since
+  // filters are changing in the design.
+
+  // let recurring;
+
+  // if (scale === 'year') {
+  //   recurring = { ...node.account.stats.activeYearlyRecurringContributions };
+  //   if (node.account.stats.activeYearlyRecurringContributions) {
+  //     recurring.value += Math.round(node.account.stats.activeMonthlyRecurringContributions.value * 12);
+  //   }
+  // } else {
+  const recurring = { ...node.account.stats.activeMonthlyRecurringContributions };
+  if (node.account.stats.activeYearlyRecurringContributions) {
+    recurring.value += Math.round(node.account.stats.activeYearlyRecurringContributions.value / 12);
   }
+  // }
 
   return recurring;
 };
 
-export default function ApolloSsrPage({ account = null, scale }) {
+export default function ContributorDashboard({ account = null }) {
+  const { LoggedInUser, loadingLoggedInUser } = useLoggedInUser();
+  const router = useRouter();
   return (
     <Layout>
-      <p>
-        Funder: <a href={`https://opencollective.com/${account.slug}`}>{account.name}</a>
-      </p>
-
-      <table style={{ width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Collective</th>
-            <th>Contributed</th>
-            <th>Received past {scale}</th>
-            <th>Spent past {scale}</th>
-            <th>Recurring {scale}</th>
-            <th>Current Balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          {account?.memberOf?.nodes &&
-            uniqBy(account?.memberOf.nodes, node => node.account.slug).map(node => (
-              <tr key={node.id}>
-                <td>
-                  <a href={`https://opencollective.com/${node.account.slug}`}>{node.account.name}</a>
-                </td>
-                <td style={{ textAlign: 'center' }}>{formatAmount(node.totalDonations)}</td>
-                <td style={{ textAlign: 'center' }}>
-                  {formatAmount(node.account.stats.totalAmountReceivedPastMonth)}
-                  <br />
-                  <small>
-                    (previous: {formatAmount(node.account.stats.totalAmountReceivedPreviousMonth)}){' '}
-                    {makeDiff(
-                      node.account.stats.totalAmountReceivedPastMonth.value,
-                      node.account.stats.totalAmountReceivedPreviousMonth.value,
-                    )}
-                  </small>
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  {formatAmount(node.account.stats.totalAmountSpentPastMonth)}
-
-                  <br />
-                  <small>
-                    (previous: {formatAmount(node.account.stats.totalAmountSpentPreviousMonth)}){' '}
-                    {makeDiff(
-                      node.account.stats.totalAmountSpentPastMonth.value,
-                      node.account.stats.totalAmountSpentPreviousMonth.value,
-                    )}
-                  </small>
-                </td>
-                <td style={{ textAlign: 'center' }}>{formatAmount(calculateRecurring(node, scale))}</td>
-                <td style={{ textAlign: 'center' }}>{formatAmount(node.account.stats.balance)}</td>
+      <Container background="white" width="100%" pb="56px" px="40px">
+        <Container display="flex" maxWidth="1280px" m="0 auto">
+          <Box flex="0 1 550px" borderRight="2px solid #D9D9D9">
+            <P fontSize="40px" fontWeight="300" mb="16px">
+              {loadingLoggedInUser ? (
+                <LoadingPlaceholder width="100%" height="46px" />
+              ) : LoggedInUser ? (
+                <FormattedMessage
+                  defaultMessage="Hello, {name}!"
+                  values={{ name: LoggedInUser.collective.name.split(' ')[0] }}
+                />
+              ) : null}
+            </P>
+            <P fontSize="18px">
+              <FormattedMessage defaultMessage="Follow up on the projects you contribute to, and manage your contribution portfolio with simplicity and transparency. " />
+            </P>
+          </Box>
+          <Container width="2px" background="#D9D9D9" mx="40px" />
+          <Box>
+            <P textTransform="uppercase" fontSize="18px" fontWEight="400" color="black.900" mb="16px">
+              <FormattedMessage defaultMessage="Amount funded" />
+            </P>
+            <P fontSize="28px" fontWeight="500" color="black.900" mb="16px">
+              $13,456.05 USD
+            </P>
+            <P fontSize="18px">
+              <FormattedMessage defaultMessage="To {count} Collectives" values={{ count: 36 }} />
+            </P>
+          </Box>
+        </Container>
+      </Container>
+      <Container px="40px" py="48px" maxWidth={1280 + 40 * 2} m="0 auto">
+        <Container background="white" px="32px" py="24px" borderRadius="16px">
+          <Container mb="48px">
+            <DashboardFilters
+              filters={router.query}
+              onChange={queryParams =>
+                router.push({ pathname: router.pathname, query: { ...router.query, ...queryParams } })
+              }
+            />
+          </Container>
+          <Table>
+            <thead>
+              <tr>
+                <th>Logo</th>
+                <th>Collective</th>
+                <th>Contributed</th>
+                <th>Received</th>
+                <th>Spent</th>
+                <th>Recurring contributions</th>
+                <th>Current Balance</th>
               </tr>
-            ))}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {account?.memberOf?.nodes &&
+                uniqBy(account?.memberOf.nodes, node => node.account.slug).map(node => (
+                  <tr key={node.id}>
+                    <td>
+                      <Avatar radius={40} collective={node.account} />
+                    </td>
+                    <td>
+                      <StyledLink
+                        href={`https://opencollective.com/${node.account.slug}`}
+                        openInNewTab
+                        color="black.800"
+                      >
+                        {node.account.name}
+                      </StyledLink>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{formatAmount(node.totalDonations)}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {formatAmount(node.account.stats.totalAmountReceivedPastMonth)}
+                      <Span fontSize="14px" ml="8px">
+                        <PercentageDiff
+                          previousValue={node.account.stats.totalAmountReceivedPreviousMonth.value}
+                          newValue={node.account.stats.totalAmountReceivedPastMonth.value}
+                        />
+                      </Span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {formatAmount(node.account.stats.totalAmountSpentPastMonth)}
+                      <Span fontSize="14px" ml="8px">
+                        <PercentageDiff
+                          previousValue={node.account.stats.totalAmountSpentPreviousMonth.value}
+                          newValue={node.account.stats.totalAmountSpentPastMonth.value}
+                        />
+                      </Span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{formatAmount(calculateRecurring(node))}</td>
+                    <td style={{ textAlign: 'center' }}>{formatAmount(node.account.stats.balance)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </Table>
 
-      {!account?.memberOf?.nodes && <p>No data.</p>}
+          {!account?.memberOf?.nodes && <p>No data.</p>}
+        </Container>
+      </Container>
     </Layout>
   );
 }
