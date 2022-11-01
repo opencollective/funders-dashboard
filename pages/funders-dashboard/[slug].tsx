@@ -1,6 +1,6 @@
 import React from 'react';
 import { gql } from '@apollo/client';
-import { uniqBy } from 'lodash';
+import { isNil, uniqBy } from 'lodash';
 import type { NextPageContext } from 'next';
 import { useRouter } from 'next/router';
 import { FormattedMessage } from 'react-intl';
@@ -21,8 +21,10 @@ import LoadingPlaceholder from '@opencollective/frontend-components/components/L
 import StyledLink from '@opencollective/frontend-components/components/StyledLink';
 import { P, Span } from '@opencollective/frontend-components/components/Text';
 
-const formatAmount = ({ value, currency }: Amount) => {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value);
+const formatAmount = ({ value, currency }: Amount, abs = false) => {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(
+    abs ? Math.abs(value) : value,
+  );
 };
 
 const Table = styled.table`
@@ -62,6 +64,12 @@ const funderQuery = gql`
     account(slug: $slug) {
       slug
       name
+      stats {
+        totalAmountSpent {
+          value
+          currency
+        }
+      }
       memberOf(role: BACKER, orderBy: { field: TOTAL_CONTRIBUTED, direction: DESC }) {
         nodes {
           id
@@ -164,6 +172,7 @@ const calculateRecurring = node => {
 export default function ContributorDashboard({ account = null }) {
   const { LoggedInUser, loadingLoggedInUser } = useLoggedInUser();
   const router = useRouter();
+  const uniqueMemberships = uniqBy(account?.memberOf?.nodes, 'account.slug');
   return (
     <Layout>
       <Container background="white" width="100%" pb="56px" px="40px">
@@ -189,10 +198,14 @@ export default function ContributorDashboard({ account = null }) {
               <FormattedMessage defaultMessage="Amount funded" />
             </P>
             <P fontSize="28px" fontWeight="500" color="black.900" mb="16px">
-              $13,456.05 USD
+              {!isNil(account.stats.totalAmountSpent) ? (
+                formatAmount(account.stats.totalAmountSpent, true)
+              ) : (
+                <LoadingPlaceholder />
+              )}
             </P>
             <P fontSize="18px">
-              <FormattedMessage defaultMessage="To {count} Collectives" values={{ count: 36 }} />
+              <FormattedMessage defaultMessage="To {count} Collectives" values={{ count: uniqueMemberships.length }} />
             </P>
           </Box>
         </Container>
@@ -220,44 +233,39 @@ export default function ContributorDashboard({ account = null }) {
               </tr>
             </thead>
             <tbody>
-              {account?.memberOf?.nodes &&
-                uniqBy(account?.memberOf.nodes, node => node.account.slug).map(node => (
-                  <tr key={node.id}>
-                    <td>
-                      <Avatar radius={40} collective={node.account} />
-                    </td>
-                    <td>
-                      <StyledLink
-                        href={`https://opencollective.com/${node.account.slug}`}
-                        openInNewTab
-                        color="black.800"
-                      >
-                        {node.account.name}
-                      </StyledLink>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>{formatAmount(node.totalDonations)}</td>
-                    <td style={{ textAlign: 'center' }}>
-                      {formatAmount(node.account.stats.totalAmountReceivedPastMonth)}
-                      <Span fontSize="14px" ml="8px">
-                        <PercentageDiff
-                          previousValue={node.account.stats.totalAmountReceivedPreviousMonth.value}
-                          newValue={node.account.stats.totalAmountReceivedPastMonth.value}
-                        />
-                      </Span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      {formatAmount(node.account.stats.totalAmountSpentPastMonth)}
-                      <Span fontSize="14px" ml="8px">
-                        <PercentageDiff
-                          previousValue={node.account.stats.totalAmountSpentPreviousMonth.value}
-                          newValue={node.account.stats.totalAmountSpentPastMonth.value}
-                        />
-                      </Span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>{formatAmount(calculateRecurring(node))}</td>
-                    <td style={{ textAlign: 'center' }}>{formatAmount(node.account.stats.balance)}</td>
-                  </tr>
-                ))}
+              {uniqueMemberships.map(node => (
+                <tr key={node.id}>
+                  <td>
+                    <Avatar radius={40} collective={node.account} />
+                  </td>
+                  <td>
+                    <StyledLink href={`https://opencollective.com/${node.account.slug}`} openInNewTab color="black.800">
+                      {node.account.name}
+                    </StyledLink>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>{formatAmount(node.totalDonations)}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    {formatAmount(node.account.stats.totalAmountReceivedPastMonth)}
+                    <Span fontSize="14px" ml="8px">
+                      <PercentageDiff
+                        previousValue={node.account.stats.totalAmountReceivedPreviousMonth.value}
+                        newValue={node.account.stats.totalAmountReceivedPastMonth.value}
+                      />
+                    </Span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {formatAmount(node.account.stats.totalAmountSpentPastMonth)}
+                    <Span fontSize="14px" ml="8px">
+                      <PercentageDiff
+                        previousValue={node.account.stats.totalAmountSpentPreviousMonth.value}
+                        newValue={node.account.stats.totalAmountSpentPastMonth.value}
+                      />
+                    </Span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>{formatAmount(calculateRecurring(node))}</td>
+                  <td style={{ textAlign: 'center' }}>{formatAmount(node.account.stats.balance)}</td>
+                </tr>
+              ))}
             </tbody>
           </Table>
 
