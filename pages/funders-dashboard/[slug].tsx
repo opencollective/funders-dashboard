@@ -1,13 +1,14 @@
 import React from 'react';
 import { gql } from '@apollo/client';
+import dayjs from 'dayjs';
 import { isNil, uniqBy } from 'lodash';
 import type { NextPageContext } from 'next';
 import { useRouter } from 'next/router';
 import { FormattedMessage } from 'react-intl';
 import styled from 'styled-components';
 
+import { formatAmount } from '../../lib/amounts';
 import { initializeApollo } from '../../lib/apollo-client';
-import { Amount } from '../../lib/graphql/types/v2/graphql';
 import { useLoggedInUser } from '../../lib/hooks/useLoggedInUser';
 import { parseDateInterval } from '@opencollective/frontend-components/lib/date-utils';
 
@@ -20,12 +21,6 @@ import { Box } from '@opencollective/frontend-components/components/Grid';
 import LoadingPlaceholder from '@opencollective/frontend-components/components/LoadingPlaceholder';
 import StyledLink from '@opencollective/frontend-components/components/StyledLink';
 import { P, Span } from '@opencollective/frontend-components/components/Text';
-
-const formatAmount = ({ value, currency }: Amount, abs = false) => {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(
-    abs ? Math.abs(value) : value,
-  );
-};
 
 const Table = styled.table`
   width: 100%;
@@ -60,7 +55,13 @@ const Table = styled.table`
 `;
 
 const funderQuery = gql`
-  query ContributorsDashboard($slug: String, $dateFrom: DateTime, $dateTo: DateTime) {
+  query ContributorsDashboard(
+    $slug: String
+    $dateFrom: DateTime
+    $dateTo: DateTime
+    $previousDateFrom: DateTime
+    $previousDateTo: DateTime
+  ) {
     account(slug: $slug) {
       slug
       name
@@ -78,7 +79,7 @@ const funderQuery = gql`
             name
             imageUrl(height: 80)
             stats {
-              totalAmountReceivedPastMonth: totalAmountReceived(
+              totalAmountReceivedPeriod: totalAmountReceived(
                 dateFrom: $dateFrom
                 dateTo: $dateTo
                 includeChildren: true
@@ -86,21 +87,21 @@ const funderQuery = gql`
                 value
                 currency
               }
-              totalAmountSpentPastMonth: totalAmountSpent(dateFrom: $dateFrom, dateTo: $dateTo, includeChildren: true) {
+              totalAmountSpentPeriod: totalAmountSpent(dateFrom: $dateFrom, dateTo: $dateTo, includeChildren: true) {
                 value
                 currency
               }
-              totalAmountReceivedPreviousMonth: totalAmountReceived(
-                dateFrom: $dateFrom
-                dateTo: $dateTo
+              totalAmountReceivedPreviousPeriod: totalAmountReceived(
+                dateFrom: $previousDateFrom
+                dateTo: $previousDateTo
                 includeChildren: true
               ) {
                 value
                 currency
               }
-              totalAmountSpentPreviousMonth: totalAmountSpent(
-                dateFrom: $dateFrom
-                dateTo: $dateTo
+              totalAmountSpentPreviousPeriod: totalAmountSpent(
+                dateFrom: $previousDateFrom
+                dateTo: $previousDateTo
                 includeChildren: true
               ) {
                 value
@@ -132,12 +133,22 @@ const funderQuery = gql`
 
 const getVariablesFromQuery = query => {
   const { from: dateFrom, to: dateTo } = parseDateInterval(query.period);
+  const [dateFromDayJs, dateToDayJs] = [dateFrom, dateTo].map(dayjs);
+  let previousDateFrom = dateFrom;
+  let previousDateTo = dateTo;
+  const period = dateToDayJs.diff(dateFromDayJs, 'day');
+  if (period > 0) {
+    previousDateFrom = dateFromDayJs.subtract(period, 'day').toISOString();
+    previousDateTo = dateToDayJs.subtract(period, 'day').toISOString();
+  }
   return {
     slug: query.slug,
     offset: parseInt(query.offset) || 0,
     limit: parseInt(query.limit) || 100,
     dateFrom,
     dateTo,
+    previousDateFrom,
+    previousDateTo,
   };
 };
 
@@ -245,20 +256,22 @@ export default function ContributorDashboard({ account = null }) {
                   </td>
                   <td style={{ textAlign: 'center' }}>{formatAmount(node.totalDonations)}</td>
                   <td style={{ textAlign: 'center' }}>
-                    {formatAmount(node.account.stats.totalAmountReceivedPastMonth)}
+                    {formatAmount(node.account.stats.totalAmountReceivedPeriod)}
                     <Span fontSize="14px" ml="8px">
                       <PercentageDiff
-                        previousValue={node.account.stats.totalAmountReceivedPreviousMonth.value}
-                        newValue={node.account.stats.totalAmountReceivedPastMonth.value}
+                        previousValue={node.account.stats.totalAmountReceivedPeriod.value}
+                        newValue={node.account.stats.totalAmountReceivedPeriod.value}
+                        currency={node.account.stats.totalAmountReceivedPeriod.currency}
                       />
                     </Span>
                   </td>
                   <td style={{ textAlign: 'center' }}>
-                    {formatAmount(node.account.stats.totalAmountSpentPastMonth)}
+                    {formatAmount(node.account.stats.totalAmountSpentPeriod)}
                     <Span fontSize="14px" ml="8px">
                       <PercentageDiff
-                        previousValue={node.account.stats.totalAmountSpentPreviousMonth.value}
-                        newValue={node.account.stats.totalAmountSpentPastMonth.value}
+                        previousValue={node.account.stats.totalAmountSpentPreviousPeriod.value}
+                        newValue={node.account.stats.totalAmountSpentPeriod.value}
+                        currency={node.account.stats.totalAmountSpentPeriod.currency}
                       />
                     </Span>
                   </td>
